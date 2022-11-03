@@ -4,11 +4,11 @@
 		<meta charset="utf-8">
 		<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 
-		<title>reveal.js</title>
+		<title>Making sudo pip safe again</title>
 
 		<link rel="stylesheet" href="dist/reset.css">
 		<link rel="stylesheet" href="dist/reveal.css">
-		<link rel="stylesheet" href="dist/theme/black.css">
+		<link rel="stylesheet" href="dist/theme/white.css">
 
 		<!-- Theme used for syntax highlighted code -->
 		<link rel="stylesheet" href="plugin/highlight/monokai.css">
@@ -18,6 +18,260 @@
 			<div class="slides">
 				<section data-markdown>
   <textarea data-template>
+
+## Fedora 🐧
+
+ * ❤️ 🐍
+ * System tools written in Python
+ * Broken Python → broken system
+ * Package manager DNF (YUM) also written in Python
+     * installs RPM packages
+ * Users can use `pip`
+
+---
+## The problem
+
+ * `/usr/lib(64)/python3.X/site-packages`
+ * `dnf` installs to ↑
+ * `sudo pip` installs to ↑
+   * same for `sudo setup.py install`
+ * `sudo pip` can override/remove DNF-installed files
+ * `pip install --user`
+     * can still "shadow" DNF-installed Python modules
+ * DNF can be affected, users unable to recover
+
+
+---
+### How to fix this
+
+ * separate locations
+     * for RPM packages
+     * for pip-installed packages
+ * pip not allowed to change files in RPM locations
+ * RPM-packaged software not to *see* pip-installed modules
+ * Python run by users to *see* pip-installed modules
+
+
+---
+### What we cannot do
+
+ * we cannot patch `pip`
+     * `pip install --upgrade pip`
+ * we cannot patch `setuptools`
+     * `pip install --upgrade setuptools`
+ * we need to patch Python itself
+     * `pip install --upgrade python` 🤡
+
+
+---
+## The first solution
+
+ * [fp.o/wiki/Changes/Making_sudo_pip_safe](https://fedoraproject.org/wiki/Changes/Making_sudo_pip_safe)
+ * Fedora 27
+ * Python 3.6
+ * 2017
+
+
+---
+### Changes in `distutils.command.install`
+
+ * when the default prefix is `/usr`
+     * set it to `/usr/local`
+ * custom prefix (even `/usr`) takes precedence
+ * `pip` uses this
+ * `setup.py install` uses this with both `setuptools` and `distutils`
+ * don't do this when building RPM packages
+
+
+---
+### Changes in `sys.path`
+
+ * the `-s` flag originally ignores
+     * `~/.local/.../site-packages`
+ * when `-s` flag is not used
+     * `/usr/local/.../site-packages` added
+ 
+
+---
+### Problems with upgrades
+
+ * `pip install --upgrade`
+     * uninstalls from `/usr`
+     * installs to `/usr/local`
+ * patched `pip` 😭 
+
+
+---
+## Bye, bye, distutils
+
+ * 2020: `distutils` deprecated, [PEP 632](https://peps.python.org/pep-0632/)
+ * `setutpools` to bundle their own
+     * but we cannot patch `setutpools`
+ * `pip` slowly moves to `sysconfig`
+ * let's make `distutils` use `sysconfig`
+
+
+---
+### distutils installation schemes
+
+```python [2|3-4]
+INSTALL_SCHEMES = {
+    'unix_prefix': {
+        'purelib': '$base/lib/python$py_version_short/site-packages',
+        'platlib': '$platbase/lib/python$py_version_short/site-packages',
+        'headers': '$base/include/python$py_version_short$abiflags/$dist_name',
+        'scripts': '$base/bin',
+        'data'   : '$base',
+        },
+    ...,
+}
+```
+
+---
+### sysconfig installation schemes
+
+```python [2|5-6]
+_INSTALL_SCHEMES = {
+    'posix_prefix': {
+        'stdlib': '{installed_base}/{platlibdir}/python{py_version_short}',
+        'platstdlib': '{platbase}/{platlibdir}/python{py_version_short}',
+        'purelib': '{base}/lib/python{py_version_short}/site-packages',
+        'platlib': '{platbase}/{platlibdir}/python{py_version_short}/site-packages',
+        'include':
+            '{installed_base}/include/python{py_version_short}{abiflags}',
+        'platinclude':
+            '{installed_platbase}/include/python{py_version_short}{abiflags}',
+        'scripts': '{base}/bin',
+        'data': '{base}',
+        },
+    ...,
+}
+```
+
+---
+### sysconfig installation schemes
+
+ * `distutils` in Python 3.10+ use the schemes from `sysconfig`
+ * let's move our `distutils` patch to `sysconfig`
+ * Filipe Laíns (FFY00) from Arch Linux
+     * "Allow Python distributors to add custom site install schemes"
+
+
+---
+### Changing the default installation scheme
+
+ * `sysconfig.get_preferred_scheme()`
+     * added in Python 3.10
+ * custom "Fedora scheme"
+ ```python
+ '{base}/local/lib/python{py_version_short}/site-packages'
+ ```
+ * `distutils` ignores this entirely
+     * `pip` still uses `distutils`
+ * **Alternative:** patch the value based on environment
+
+---
+# RPM prefix
+```python [2,5-6|9,12-13]
+_INSTALL_SCHEMES = {
+    'posix_prefix': {
+        'stdlib': '{installed_base}/{platlibdir}/python{py_version_short}',
+        'platstdlib': '{platbase}/{platlibdir}/python{py_version_short}',
+        'purelib': '{base}/local/lib/python{py_version_short}/site-packages',
+        'platlib': '{platbase}/local/{platlibdir}/python{py_version_short}/site-packages',
+	...
+        },
+    'rpm_prefix': {
+        'stdlib': '{installed_base}/{platlibdir}/python{py_version_short}',
+        'platstdlib': '{platbase}/{platlibdir}/python{py_version_short}',
+        'purelib': '{base}/lib/python{py_version_short}/site-packages',
+        'platlib': '{platbase}/{platlibdir}/python{py_version_short}/site-packages',
+	...
+        },
+    ...,
+}
+
+---
+```python [2,5-6|11-15]
+_INSTALL_SCHEMES = {
+    'posix_prefix': {
+        'stdlib': '{installed_base}/{platlibdir}/python{py_version_short}',
+        'platstdlib': '{platbase}/{platlibdir}/python{py_version_short}',
+        'purelib': '{base}/lib/python{py_version_short}/site-packages',
+        'platlib': '{platbase}/{platlibdir}/python{py_version_short}/site-packages',
+	...
+        },
+    ...,
+}
+if not (RPM or VIRTUALENV):
+    _INSTALL_SCHEMES['posix_prefix']['purelib'] = \
+        '{base}/local/lib/python{py_version_short}/site-packages'
+    _INSTALL_SCHEMES['posix_prefix']['platlib'] = \
+        '{base}/local/{platlibdir}/python{py_version_short}/site-packages'
+    
+
+---
+### Problems with virtual environment bootstraps
+
+ * virtualenv uses the install scheme we patched
+ * we don't do anything *in* virtual environments
+ * problem of bootstrapping *new* venvs
+ * a new *venv* install scheme in Fedora
+     * later added to Python 3.11
+     * Python's `venv` uses it now as well
+
+
+---
+### Problems with custom prefix
+
+ * `--prefix /usr`
+ * `--prefix /usr/local`
+ * `'{base}/local/lib/...'`
+ * UX nightmare
+ * we had to revert
+
+
+---
+### Change {base} to {localbase}
+
+ * Maybe our scheme can have custom variables in it
+ * `'{localbase}/local/lib/...'`
+ * Breaks everything, even `distutils`
+
+
+---
+### Change the default meaning of `{base}`
+
+ * changes in `distutils` still needed
+ * `pip` works properly
+
+
+---
+## PEP 668
+ * [PEP 668](https://peps.python.org/pep-0668/): Marking Python base environments as “externally managed”
+ * upstream solution to the `pip` patch
+ * puts a marker file into `/usr/lib/python3.X/`
+ * `pip` to refuse to touch it
+ * collisions between `/usr/lib` and `/usr/local`
+
+---
+```python [3-4]
+_INSTALL_SCHEMES = {
+    'posix_prefix': {
+        'stdlib': '{installed_base}/{platlibdir}/python{py_version_short}',
+        'platstdlib': '{platbase}/{platlibdir}/python{py_version_short}',
+        'purelib': '{base}/local/lib/python{py_version_short}/site-packages',
+        'platlib': '{platbase}/local/{platlibdir}/python{py_version_short}/site-packages',
+	...
+        },
+    ...,
+}
+
+
+---
+## Future solution and PEP needed
+
+ * Python needs to recognize the 2 install locations somehow
 
  
  
