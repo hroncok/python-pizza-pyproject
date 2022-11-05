@@ -236,7 +236,7 @@ if not (RPM or VIRTUALENV):
 ### Change {base} to {localbase}
 
  * Maybe our scheme can have custom variables in it
- * `'{localbase}/local/lib/...'`
+ * `'{localbase}/lib/...'`
  * Breaks everything, even `distutils`
 
 
@@ -273,7 +273,7 @@ diff --git a/Lib/site.py b/Lib/site.py
 ```
 ---
 ## sysconfig.py
-```diff [56-61|37-38|15-18]
+```diff [46,56-61|37-38|15-18]
 diff --git a/Lib/sysconfig.py b/Lib/sysconfig.py
 --- a/Lib/sysconfig.py
 +++ b/Lib/sysconfig.py
@@ -379,13 +379,13 @@ diff --git a/Lib/distutils/command/install.py b/Lib/distutils/command/install.py
  * collisions between `/usr/lib` and `/usr/local`
 
 ---
-```python [3-4]
+```python [3,5-6]
 _INSTALL_SCHEMES = {
     'posix_prefix': {
         'stdlib': '{installed_base}/{platlibdir}/python{py_version_short}',
         'platstdlib': '{platbase}/{platlibdir}/python{py_version_short}',
-        'purelib': '{base}/local/lib/python{py_version_short}/site-packages',
-        'platlib': '{platbase}/local/{platlibdir}/python{py_version_short}/site-packages',
+        'purelib': '{base}/lib/python{py_version_short}/site-packages',
+        'platlib': '{platbase}/{platlibdir}/python{py_version_short}/site-packages',
 	...
         },
     ...,
