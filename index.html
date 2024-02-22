@@ -86,10 +86,16 @@ description = "🍕"
 ```
 
 ---
+```pycon []
+>>> requires = ['setuptools >= 40.8']
+>>> backend_name = 'setuptools.build_meta:__legacy__'
+```
+
+---
 ```pycon [2-3]
 >>> import importlib
->>> module_name = pyproject['build-system']['build-backend']
->>> backend = importlib.import_module(module_name)
+>>> backend_name = pyproject['build-system']['build-backend']
+>>> backend = importlib.import_module(backend_name)
 >>> backend
 <module 'hatchling.build' from '.../site-packages/hatchling/build.py'>
 ```
