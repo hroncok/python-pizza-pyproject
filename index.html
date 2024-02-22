@@ -95,6 +95,25 @@ description = "🍕"
 ```
 
 ---
+```pycon [3-6|7-13]
+>>> import importlib, sys
+>>> backend_name = pyproject['build-system']['build-backend']
+>>> backend_path = pyproject['build-system'].get('backend-path')
+>>> if backend_path:
+...     sys.path = backend_path + sys.path
+... 
+>>> module_name, _, object_name = backend_name.partition(':')
+>>> backend_module = importlib.import_module(module_name)
+>>> if object_name:
+...     backend = getattr(backend_module, object_name)
+... else:
+...     backend = backend_module
+... 
+>>> backend
+<module 'hatchling.build' from '.../site-packages/hatchling/build.py'>
+```
+
+---
 ```pycon [1-4|5-6]
 >>> hasattr(backend, 'get_requires_for_build_wheel')
 True
