@@ -4,7 +4,7 @@
 		<meta charset="utf-8">
 		<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 
-		<title>Making sudo pip safe again</title>
+		<title>Fedora Loves Python</title>
 
 		<link rel="stylesheet" href="dist/reset.css">
 		<link rel="stylesheet" href="dist/reveal.css">
@@ -21,386 +21,65 @@
 
 ##  ![Fedora Loves Python](flp.svg)
 ---
+```pycon
+[fedora]$ python3 -m venv venv
+[fedora]$ . venv/bin/activate
+(venv) [fedora]$ python ...
+(venv) [fedora]$ pip install ...
+```
+
+---
+```pycon
+[fedora]$ sudo dnf install python3.12
+...
+[fedora]$ python3.12
+Python 3.12.0b4 (main, Jul 12 2023, 00:00:00) [GCC 12.3.1 20230508 (Red Hat 12.3.1-1)] on linux
+Type "help", "copyright", "credits" or "license" for more information.
+>>> 
+
+```
+
+---
+```pycon
+[fedora]$ sudo dnf install tox
+...
+[fedora]$ tox
+...
+  py27: commands succeeded
+  py36: commands succeeded
+  py37: commands succeeded
+  py38: commands succeeded
+  py39: commands succeeded
+  py310: commands succeeded
+  py311: commands succeeded
+  py312: commands succeeded
+  pypy38: commands succeeded
+  pypy39: commands succeeded
+  congratulations :)
+```
+
+---
+
+<section data-background="patches.png" />
+
+---
+
+<section data-background="lab.png" />
+
+---
+
+<section data-background="action.png" />
+
+---
+
+<section data-background="train.jpg" />
+
+---
+
 ##  ![Fedora Loves Python](flp.svg)
 
- * System tools written in Python
- * Broken Python → broken system
- * Package manager DNF (YUM) also written in Python
-     * installs RPM packages
- * Users can use `pip`
+**fedora**loves**python**.org
 
----
-## The problem
-
- * `/usr/lib(64)/python3.X/site-packages`
- * `dnf` installs to ↑
- * `sudo pip` installs to ↑
-   * same for `sudo setup.py install`
- * <!-- .element: class="fragment" data-fragment-index="1" --> <code>sudo pip</code> can override/remove DNF-installed files 
- * <!-- .element: class="fragment" data-fragment-index="2" --> <code>pip install --user</code>
-     * <!-- .element: class="fragment" data-fragment-index="2" --> can still <em>shadow</em> DNF-installed Python modules
- * <!-- .element: class="fragment" data-fragment-index="3" --> DNF can be affected, users unable to recover
-
-
----
-### How to fix this
-
- * separate locations
-     * for RPM packages
-     * for pip-installed packages
- * pip not allowed to change files in RPM locations
- * RPM-packaged software not to *see* pip-installed modules
- * Python run by users to *see* pip-installed modules
-
-
----
-### What we cannot do
-
- * we cannot patch `pip`
-     * `pip install --upgrade pip`
- * we cannot patch `setuptools`
-     * `pip install --upgrade setuptools`
- * we need to patch Python itself
-     * `pip install --upgrade python` 🤡
-
-
----
-## The first solution
-
- * [fp.o/wiki/Changes/Making_sudo_pip_safe](https://fedoraproject.org/wiki/Changes/Making_sudo_pip_safe)
- * Fedora 27
- * Python 3.6
- * 2017
-
-
----
-### Changes in `distutils.command.install`
-
- * when the default prefix is `/usr`
-     * set it to `/usr/local`
- * custom prefix (even `/usr`) takes precedence
- * `pip` uses this
- * `setup.py install` uses this with both `setuptools` and `distutils`
- * don't do this when building RPM packages
-
-
----
-### Changes in `sys.path`
-
- * the `-s` flag originally ignores
-     * `~/.local/.../site-packages`
- * when `-s` flag is not used
-     * `/usr/local/.../site-packages` added
- 
-
----
-### Problems with upgrades
-
- * `pip install --upgrade`
-     * uninstalls from `/usr`
-     * installs to `/usr/local`
- * patched `pip` 😭 
-
-
----
-## Bye, bye, distutils
-
- * 2020: `distutils` deprecated, [PEP 632](https://peps.python.org/pep-0632/)
- * `setutpools` to bundle their own
-     * but we cannot patch `setutpools`
- * `pip` slowly moves to `sysconfig`
- * let's make `distutils` use `sysconfig`
-
-
----
-### distutils installation schemes
-
-```python [2|3-4]
-INSTALL_SCHEMES = {
-    'unix_prefix': {
-        'purelib': '$base/lib/python$py_version_short/site-packages',
-        'platlib': '$platbase/lib/python$py_version_short/site-packages',
-        'headers': '$base/include/python$py_version_short$abiflags/$dist_name',
-        'scripts': '$base/bin',
-        'data'   : '$base',
-        },
-    ...,
-}
-```
-
----
-### sysconfig installation schemes
-
-```python [2|5-6]
-_INSTALL_SCHEMES = {
-    'posix_prefix': {
-        'stdlib': '{installed_base}/{platlibdir}/python{py_version_short}',
-        'platstdlib': '{platbase}/{platlibdir}/python{py_version_short}',
-        'purelib': '{base}/lib/python{py_version_short}/site-packages',
-        'platlib': '{platbase}/{platlibdir}/python{py_version_short}/site-packages',
-        'include':
-            '{installed_base}/include/python{py_version_short}{abiflags}',
-        'platinclude':
-            '{installed_platbase}/include/python{py_version_short}{abiflags}',
-        'scripts': '{base}/bin',
-        'data': '{base}',
-        },
-    ...,
-}
-```
-
----
-### sysconfig installation schemes
-
- * `distutils` in Python 3.10+ use the schemes from `sysconfig`
- * let's move our `distutils` patch to `sysconfig`
- * Filipe Laíns (FFY00) from Arch Linux
-     * "Allow Python distributors to add custom site install schemes"
-
-
----
-### Changing the default installation scheme
-
- * `sysconfig.get_preferred_scheme()`
-     * added in Python 3.10
- * custom "Fedora scheme"
- ```python
- '{base}/local/lib/python{py_version_short}/site-packages'
- ```
- * `distutils` ignores this entirely
-     * `pip` still uses `distutils`
- * **Alternative:** patch the value based on environment
-
----
-## RPM prefix
-```python [2,5-6|9,12-13]
-_INSTALL_SCHEMES = {
-    'posix_prefix': {
-        'stdlib': '{installed_base}/{platlibdir}/python{py_version_short}',
-        'platstdlib': '{platbase}/{platlibdir}/python{py_version_short}',
-        'purelib': '{base}/local/lib/python{py_version_short}/site-packages',
-        'platlib': '{platbase}/local/{platlibdir}/python{py_version_short}/site-packages',
-	...
-        },
-    'rpm_prefix': {
-        'stdlib': '{installed_base}/{platlibdir}/python{py_version_short}',
-        'platstdlib': '{platbase}/{platlibdir}/python{py_version_short}',
-        'purelib': '{base}/lib/python{py_version_short}/site-packages',
-        'platlib': '{platbase}/{platlibdir}/python{py_version_short}/site-packages',
-	...
-        },
-    ...,
-}
-
----
-```python [2,5-6|11-15]
-_INSTALL_SCHEMES = {
-    'posix_prefix': {
-        'stdlib': '{installed_base}/{platlibdir}/python{py_version_short}',
-        'platstdlib': '{platbase}/{platlibdir}/python{py_version_short}',
-        'purelib': '{base}/lib/python{py_version_short}/site-packages',
-        'platlib': '{platbase}/{platlibdir}/python{py_version_short}/site-packages',
-	...
-        },
-    ...,
-}
-if not (RPM or VIRTUALENV):
-    _INSTALL_SCHEMES['posix_prefix']['purelib'] = \
-        '{base}/local/lib/python{py_version_short}/site-packages'
-    _INSTALL_SCHEMES['posix_prefix']['platlib'] = \
-        '{platbase}/local/{platlibdir}/python{py_version_short}/site-packages'
-    
-
----
-### Problems with virtual environment bootstraps
-
- * virtualenv uses the install scheme we patched
- * we don't do anything *in* virtual environments
- * problem of bootstrapping *new* venvs
- * a new *venv* install scheme in Fedora
-     * later added to Python 3.11
-     * Python's `venv` uses it now as well
-
-
----
-### Problems with custom prefix
-
- * `--prefix /usr`
- * `--prefix /usr/local`
- * `'{base}/local/lib/...'`
- * UX nightmare
- * we had to revert
-
-
----
-### Change {base} to {localbase}
-
- * Maybe our scheme can have custom variables in it
- * `'{localbase}/lib/...'`
- * Breaks everything, even `distutils`
-
-
----
-### Change the default meaning of `{base}`
-
- * changes in `distutils` still needed
- * `pip` works properly
-
-
----
-## site.py
-```diff [16-17]
-diff --git a/Lib/site.py b/Lib/site.py
---- a/Lib/site.py
-+++ b/Lib/site.py
-@@ -377,8 +377,15 @@ def getsitepackages(prefixes=None):
-     return sitepackages
- 
- def addsitepackages(known_paths, prefixes=None):
--    """Add site-packages to sys.path"""
-+    """Add site-packages to sys.path
-+
-+    '/usr/local' is included in PREFIXES if RPM build is not detected
-+    to make packages installed into this location visible.
-+
-+    """
-     _trace("Processing global site-packages")
-+    if ENABLE_USER_SITE and 'RPM_BUILD_ROOT' not in os.environ:
-+        PREFIXES.insert(0, "/usr/local")
-     for sitedir in getsitepackages(prefixes):
-         if os.path.isdir(sitedir):
-             addsitedir(sitedir, known_paths)
-```
----
-## sysconfig.py
-```diff [46,56-61|37-38|15-18]
-diff --git a/Lib/sysconfig.py b/Lib/sysconfig.py
---- a/Lib/sysconfig.py
-+++ b/Lib/sysconfig.py
-@@ -162,6 +167,19 @@ def joinuser(*args):
-             },
-     }
- 
-+# This is used by distutils.command.install in the stdlib
-+# as well as pypa/distutils (e.g. bundled in setuptools).
-+# The self.prefix value is set to sys.prefix + /local/
-+# if neither RPM build nor virtual environment is
-+# detected to make distutils install packages
-+# into the separate location.
-+# https://fedoraproject.org/wiki/Changes/Making_sudo_pip_safe
-+if (not (hasattr(sys, 'real_prefix') or
-+    sys.prefix != sys.base_prefix) and
-+    'RPM_BUILD_ROOT' not in os.environ):
-+    _prefix_addition = '/local'
-+
-+
- _SCHEME_KEYS = ('stdlib', 'platstdlib', 'purelib', 'platlib', 'include',
-                 'scripts', 'data')
- 
-@@ -258,11 +276,40 @@ def _extend_dict(target_dict, other_dict):
-         target_dict[key] = value
- 
- 
-+_CONFIG_VARS_LOCAL = None
-+
-+
-+def _config_vars_local():
-+    # This function returns the config vars with prefixes amended to /usr/local
-+    # https://fedoraproject.org/wiki/Changes/Making_sudo_pip_safe
-+    global _CONFIG_VARS_LOCAL
-+    if _CONFIG_VARS_LOCAL is None:
-+        _CONFIG_VARS_LOCAL = dict(get_config_vars())
-+        _CONFIG_VARS_LOCAL['base'] = '/usr/local'
-+        _CONFIG_VARS_LOCAL['platbase'] = '/usr/local'
-+    return _CONFIG_VARS_LOCAL
-+
-+
- def _expand_vars(scheme, vars):
-     res = {}
-     if vars is None:
-         vars = {}
--    _extend_dict(vars, get_config_vars())
-+
-+    # when we are not in a virtual environment or an RPM build
-+    # we change '/usr' to '/usr/local'
-+    # to avoid surprises, we explicitly check for the /usr/ prefix
-+    # Python virtual environments have different prefixes
-+    # we only do this for posix_prefix, not to mangle the venv scheme
-+    # posix_prefix is used by sudo pip install
-+    # we only change the defaults here, so explicit --prefix will take precedence
-+    # https://fedoraproject.org/wiki/Changes/Making_sudo_pip_safe
-+    if (scheme == 'posix_prefix' and
-+        _PREFIX == '/usr' and
-+        'RPM_BUILD_ROOT' not in os.environ):
-+            _extend_dict(vars, _config_vars_local())
-+    else:
-+        _extend_dict(vars, get_config_vars())
-+
-     if os.name == 'nt':
-         # On Windows we want to substitute 'lib' for schemes rather
-         # than the native value (without modifying vars, in case it
-```
----
-## distutils
-```diff [8-9|16-22]
-diff --git a/Lib/distutils/command/install.py b/Lib/distutils/command/install.py
---- a/Lib/distutils/command/install.py
-+++ b/Lib/distutils/command/install.py
-@@ -159,6 +159,8 @@ class install(Command):
- 
-     negative_opt = {'no-compile' : 'compile'}
- 
-+    # Allow Fedora to add components to the prefix
-+    _prefix_addition = getattr(sysconfig, '_prefix_addition', '')
- 
-     def initialize_options(self):
-         """Initializes options."""
-@@ -441,8 +443,10 @@ def finalize_unix(self):
-                     raise DistutilsOptionError(
-                           "must not supply exec-prefix without prefix")
- 
--                self.prefix = os.path.normpath(sys.prefix)
--                self.exec_prefix = os.path.normpath(sys.exec_prefix)
-+                self.prefix = (
-+                    os.path.normpath(sys.prefix) + self._prefix_addition)
-+                self.exec_prefix = (
-+                    os.path.normpath(sys.exec_prefix) + self._prefix_addition)
- 
-             else:
-                 if self.exec_prefix is None:
-```
-
----
-## PEP 668
- * [PEP 668](https://peps.python.org/pep-0668/): Marking Python base environments as “externally managed”
- * upstream solution to the `pip` patch
- * puts a marker file into `/usr/lib/python3.X/`
- * `pip` to refuse to touch it
- * collisions between `/usr/lib` and `/usr/local`
-
----
-```python [3,5-6]
-_INSTALL_SCHEMES = {
-    'posix_prefix': {
-        'stdlib': '{installed_base}/{platlibdir}/python{py_version_short}',
-        'platstdlib': '{platbase}/{platlibdir}/python{py_version_short}',
-        'purelib': '{base}/lib/python{py_version_short}/site-packages',
-        'platlib': '{platbase}/{platlibdir}/python{py_version_short}/site-packages',
-	...
-        },
-    ...,
-}
-
-
----
-## Future solution and PEP needed
-
- * Python needs to recognize the 2 install locations somehow
-
----
-##  ![Fedora Loves Python](flp.svg)
-
- 
   </textarea>
 </section>
 			</div>
