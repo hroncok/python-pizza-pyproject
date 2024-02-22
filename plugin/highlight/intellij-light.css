@@ -117,3 +117,8 @@ Intellij-light style (c) Pegasis <me@pegasis.site>
 .hljs-tag {
   /* purposely ignored */
 }
+
+/* custom */
+.hljs-ln-numbers {
+  opacity: 0.3 !important;
+}

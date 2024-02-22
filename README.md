@@ -1,11 +1,8 @@
-## PyCon PL 2022: Making sudo pip safe again
+## Prague Python Pizza 2024
 
-See the slides live at https://hroncok.cz/pyconpl22/
+### Python Packaging: pyproject.toml build backends under the hood
 
-Consider the slides content Public Domain,
-except for the code examples which are [Python-licensed](https://docs.python.org/3.11/license.html)
-and the Fedora Loves Python logo which is
-[released under CC BY-SA with some restrictions](https://github.com/fedora-python/fedora-loves-python#licensing-information).
+...
 
 The rest is the original README for reveal.js which is [MIT licensed](./LICENSE):
 
